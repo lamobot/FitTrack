@@ -2,10 +2,9 @@
 //  FitTrackApp.swift
 //  FitTrack
 //
-//  Created by Valerii Toropov on 16. 1. 2026..
-//
 
 import SwiftUI
+import SwiftData
 
 @main
 struct FitTrackApp: App {
@@ -13,5 +12,6 @@ struct FitTrackApp: App {
         WindowGroup {
             ContentView()
         }
+        .modelContainer(for: [WorkoutSession.self, CompletedExercise.self])
     }
 }
