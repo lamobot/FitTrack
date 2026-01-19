@@ -4,14 +4,20 @@
 //
 
 import SwiftUI
+import UserNotifications
+import AudioToolbox
 
 struct RestTimerOverlay: View {
     @Binding var isShowing: Bool
+    @Environment(\.scenePhase) private var scenePhase
+
+    @AppStorage("restTimerDuration") private var defaultDuration: Int = 90
 
     @State private var timeRemaining: Int = 90
     @State private var selectedDuration: Int = 90
     @State private var isRunning = false
     @State private var timer: Timer?
+    @State private var endTime: Date?
 
     private let durations = [30, 60, 90, 120, 180]
 
@@ -102,6 +108,11 @@ struct RestTimerOverlay: View {
                         // Add 30 seconds
                         Button {
                             timeRemaining += 30
+                            // Update scheduled notification
+                            if let currentEnd = endTime {
+                                endTime = currentEnd.addingTimeInterval(30)
+                                scheduleTimerNotification()
+                            }
                         } label: {
                             Label("+30с", systemImage: "plus")
                                 .font(.headline)
@@ -143,8 +154,27 @@ struct RestTimerOverlay: View {
             }
             .padding(24)
         }
+        .onAppear {
+            // Load default duration from settings
+            selectedDuration = defaultDuration
+            timeRemaining = defaultDuration
+            requestNotificationPermission()
+        }
         .onDisappear {
             stopTimer()
+        }
+        .onChange(of: scenePhase) { _, newPhase in
+            if newPhase == .active && isRunning {
+                // Recalculate time remaining when app becomes active
+                if let end = endTime {
+                    let remaining = Int(end.timeIntervalSince(Date()))
+                    if remaining <= 0 {
+                        timerFinished()
+                    } else {
+                        timeRemaining = remaining
+                    }
+                }
+            }
         }
     }
 
@@ -162,26 +192,65 @@ struct RestTimerOverlay: View {
         return "\(secs)"
     }
 
+    private func requestNotificationPermission() {
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
+    }
+
     private func startTimer() {
         isRunning = true
+        endTime = Date().addingTimeInterval(TimeInterval(timeRemaining))
+
+        // Schedule notification for when timer ends
+        scheduleTimerNotification()
+
         timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in
             if timeRemaining > 0 {
                 timeRemaining -= 1
             } else {
-                // Vibration and sound
-                let generator = UINotificationFeedbackGenerator()
-                generator.notificationOccurred(.success)
-                stopTimer()
-                isShowing = false
+                timerFinished()
             }
         }
+    }
+
+    private func scheduleTimerNotification() {
+        // Cancel any existing timer notification
+        UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: ["rest-timer"])
+
+        guard let end = endTime else { return }
+
+        let content = UNMutableNotificationContent()
+        content.title = "Отдых окончен!"
+        content.body = "Время следующего подхода"
+        content.sound = .default
+
+        let timeInterval = end.timeIntervalSince(Date())
+        guard timeInterval > 0 else { return }
+
+        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: timeInterval, repeats: false)
+        let request = UNNotificationRequest(identifier: "rest-timer", content: content, trigger: trigger)
+
+        UNUserNotificationCenter.current().add(request)
+    }
+
+    private func timerFinished() {
+        // Vibration
+        AudioServicesPlaySystemSound(kSystemSoundID_Vibrate)
+        // Also play alert sound
+        AudioServicesPlayAlertSound(SystemSoundID(1005))
+
+        stopTimer()
+        isShowing = false
     }
 
     private func stopTimer() {
         timer?.invalidate()
         timer = nil
         isRunning = false
+        endTime = nil
         timeRemaining = selectedDuration
+
+        // Cancel scheduled notification
+        UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: ["rest-timer"])
     }
 }
 

@@ -9,16 +9,24 @@ import SwiftData
 struct WorkoutView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.scenePhase) private var scenePhase
 
     let workoutDay: WorkoutDay
 
     @State private var completedSets: [String: Int] = [:]
     @State private var weights: [String: Double] = [:]
-    @State private var startTime = Date()
+    @State private var startTime: Date?
+    @State private var isWorkoutStarted: Bool = false
     @State private var showRestTimer = false
     @State private var showFinishAlert = false
     @State private var elapsedTime: TimeInterval = 0
     @State private var timer: Timer?
+
+    // Keys for saving state
+    private var startTimeKey: String { "workout_start_time_\(workoutDay.rawValue)" }
+    private var completedSetsKey: String { "workout_sets_\(workoutDay.rawValue)" }
+    private var weightsKey: String { "workout_weights_\(workoutDay.rawValue)" }
+    private var isStartedKey: String { "workout_started_\(workoutDay.rawValue)" }
 
     private var categories: [ExerciseCategory] {
         WorkoutData.categories(for: workoutDay)
@@ -53,11 +61,18 @@ struct WorkoutView: View {
                         categorySection(category)
                     }
 
-                    // Finish button
-                    finishButton
-                        .padding(.bottom, 100)
+                    // Finish button (only when workout started)
+                    if isWorkoutStarted {
+                        finishButton
+                            .padding(.bottom, 100)
+                    }
                 }
                 .padding()
+            }
+
+            // Start workout overlay
+            if !isWorkoutStarted {
+                startWorkoutOverlay
             }
 
             // Rest timer
@@ -69,31 +84,82 @@ struct WorkoutView: View {
         .navigationBarTitleDisplayMode(.large)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    showRestTimer = true
-                } label: {
-                    Image(systemName: "timer")
-                        .font(.title3)
+                if isWorkoutStarted {
+                    Button {
+                        showRestTimer = true
+                    } label: {
+                        Image(systemName: "timer")
+                            .font(.title3)
+                    }
                 }
             }
         }
         .onAppear {
-            startTime = Date()
-            loadLastWeights()
-            startTimer()
+            loadSavedState()
+            if isWorkoutStarted {
+                resumeTimer()
+            }
         }
         .onDisappear {
             timer?.invalidate()
+            if isWorkoutStarted {
+                saveState()
+            }
+        }
+        .onChange(of: scenePhase) { _, newPhase in
+            if newPhase == .active && isWorkoutStarted {
+                // Recalculate elapsed time when app becomes active
+                if let start = startTime {
+                    elapsedTime = Date().timeIntervalSince(start)
+                }
+            } else if newPhase == .background && isWorkoutStarted {
+                saveState()
+            }
         }
         .alert("Завершить тренировку?", isPresented: $showFinishAlert) {
             Button("Отмена", role: .cancel) { }
             Button("Завершить") {
                 saveWorkout()
+                clearSavedState()
                 dismiss()
             }
         } message: {
             Text("Выполнено \(completedExercisesCount) из \(totalExercises) упражнений")
         }
+    }
+
+    // MARK: - Start Workout Overlay
+    private var startWorkoutOverlay: some View {
+        VStack {
+            Spacer()
+
+            Button {
+                withAnimation(.spring(response: 0.3)) {
+                    startWorkout()
+                }
+            } label: {
+                HStack {
+                    Image(systemName: "play.fill")
+                    Text("Начать тренировку")
+                }
+                .font(.headline)
+                .foregroundStyle(.white)
+                .frame(maxWidth: .infinity)
+                .padding()
+                .background(accentColor)
+                .clipShape(RoundedRectangle(cornerRadius: 16))
+            }
+            .padding()
+            .padding(.bottom, 20)
+        }
+        .background(
+            LinearGradient(
+                colors: [.clear, Color(.systemBackground).opacity(0.9), Color(.systemBackground)],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .ignoresSafeArea()
+        )
     }
 
     // MARK: - Progress Section
@@ -117,10 +183,18 @@ struct WorkoutView: View {
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
 
-                    Text(formatTime(elapsedTime))
-                        .font(.title)
-                        .fontWeight(.bold)
-                        .monospacedDigit()
+                    if isWorkoutStarted {
+                        Text(formatTime(elapsedTime))
+                            .font(.title)
+                            .fontWeight(.bold)
+                            .monospacedDigit()
+                    } else {
+                        Text("0:00")
+                            .font(.title)
+                            .fontWeight(.bold)
+                            .monospacedDigit()
+                            .foregroundStyle(.secondary)
+                    }
                 }
             }
 
@@ -147,11 +221,13 @@ struct WorkoutView: View {
                         completedSets: completedSets[exercise.name] ?? 0,
                         weight: weights[exercise.name] ?? exercise.defaultWeight ?? 0,
                         accentColor: accentColor,
+                        isEnabled: isWorkoutStarted,
                         onSetCompleted: {
                             withAnimation(.spring(response: 0.3)) {
                                 let current = completedSets[exercise.name] ?? 0
                                 if current < exercise.sets {
                                     completedSets[exercise.name] = current + 1
+                                    saveState()
                                     // Show rest timer after set (except last one)
                                     if current + 1 < exercise.sets {
                                         showRestTimer = true
@@ -164,11 +240,13 @@ struct WorkoutView: View {
                                 let current = completedSets[exercise.name] ?? 0
                                 if current > 0 {
                                     completedSets[exercise.name] = current - 1
+                                    saveState()
                                 }
                             }
                         },
                         onWeightChanged: { newWeight in
                             weights[exercise.name] = newWeight
+                            saveState()
                         }
                     )
                 }
@@ -210,15 +288,67 @@ struct WorkoutView: View {
         return String(format: "%d:%02d", minutes, seconds)
     }
 
-    private func startTimer() {
+    private func startWorkout() {
+        isWorkoutStarted = true
+        startTime = Date()
+        elapsedTime = 0
+        UserDefaults.standard.set(startTime, forKey: startTimeKey)
+        UserDefaults.standard.set(true, forKey: isStartedKey)
+
         timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in
-            elapsedTime = Date().timeIntervalSince(startTime)
+            if let start = startTime {
+                elapsedTime = Date().timeIntervalSince(start)
+            }
         }
     }
 
-    private func loadLastWeights() {
-        // Load weights from last workout
-        // (will be implemented via SwiftData Query)
+    private func resumeTimer() {
+        if let start = startTime {
+            elapsedTime = Date().timeIntervalSince(start)
+            timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in
+                elapsedTime = Date().timeIntervalSince(start)
+            }
+        }
+    }
+
+    private func loadSavedState() {
+        // Load workout started state
+        isWorkoutStarted = UserDefaults.standard.bool(forKey: isStartedKey)
+
+        // Load start time
+        if let savedTime = UserDefaults.standard.object(forKey: startTimeKey) as? Date {
+            startTime = savedTime
+        }
+
+        // Load completed sets
+        if let data = UserDefaults.standard.data(forKey: completedSetsKey),
+           let decoded = try? JSONDecoder().decode([String: Int].self, from: data) {
+            completedSets = decoded
+        }
+
+        // Load weights
+        if let data = UserDefaults.standard.data(forKey: weightsKey),
+           let decoded = try? JSONDecoder().decode([String: Double].self, from: data) {
+            weights = decoded
+        }
+    }
+
+    private func saveState() {
+        // Save completed sets
+        if let encoded = try? JSONEncoder().encode(completedSets) {
+            UserDefaults.standard.set(encoded, forKey: completedSetsKey)
+        }
+        // Save weights
+        if let encoded = try? JSONEncoder().encode(weights) {
+            UserDefaults.standard.set(encoded, forKey: weightsKey)
+        }
+    }
+
+    private func clearSavedState() {
+        UserDefaults.standard.removeObject(forKey: startTimeKey)
+        UserDefaults.standard.removeObject(forKey: completedSetsKey)
+        UserDefaults.standard.removeObject(forKey: weightsKey)
+        UserDefaults.standard.removeObject(forKey: isStartedKey)
     }
 
     private func saveWorkout() {
@@ -256,6 +386,7 @@ struct ExerciseRow: View {
     let completedSets: Int
     let weight: Double
     let accentColor: Color
+    var isEnabled: Bool = true
     let onSetCompleted: () -> Void
     let onSetDecremented: () -> Void
     let onWeightChanged: (Double) -> Void
@@ -305,8 +436,8 @@ struct ExerciseRow: View {
                             .font(.title2)
                             .foregroundStyle(.secondary)
                     }
-                    .opacity(completedSets > 0 ? 1 : 0.3)
-                    .disabled(completedSets == 0)
+                    .opacity(completedSets > 0 && isEnabled ? 1 : 0.3)
+                    .disabled(completedSets == 0 || !isEnabled)
 
                     Text("\(completedSets)/\(exercise.sets)")
                         .font(.headline)
@@ -318,9 +449,9 @@ struct ExerciseRow: View {
                     } label: {
                         Image(systemName: isCompleted ? "checkmark.circle.fill" : "plus.circle.fill")
                             .font(.title2)
-                            .foregroundStyle(isCompleted ? .green : accentColor)
+                            .foregroundStyle(isCompleted ? .green : (isEnabled ? accentColor : .secondary))
                     }
-                    .disabled(isCompleted)
+                    .disabled(isCompleted || !isEnabled)
                 }
             }
 
@@ -337,6 +468,7 @@ struct ExerciseRow: View {
         .padding()
         .background(Color(.secondarySystemBackground))
         .clipShape(RoundedRectangle(cornerRadius: 12))
+        .opacity(isEnabled ? 1 : 0.7)
         .sheet(isPresented: $showWeightPicker) {
             WeightPickerSheet(weight: weight, onSave: onWeightChanged)
                 .presentationDetents([.height(300)])

@@ -17,17 +17,23 @@ struct ContentView: View {
                 }
                 .tag(0)
 
-            HistoryView()
+            ProgressReportView()
                 .tabItem {
-                    Label("История", systemImage: "chart.bar.fill")
+                    Label("Прогресс", systemImage: "chart.line.uptrend.xyaxis")
                 }
                 .tag(1)
+
+            HistoryView()
+                .tabItem {
+                    Label("История", systemImage: "calendar")
+                }
+                .tag(2)
 
             SettingsView()
                 .tabItem {
                     Label("Настройки", systemImage: "gearshape.fill")
                 }
-                .tag(2)
+                .tag(3)
         }
         .tint(.orange)
     }
