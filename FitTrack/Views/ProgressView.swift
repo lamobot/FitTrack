@@ -216,7 +216,7 @@ struct ProgressReportView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 16))
 
                     // Progress summary
-                    if let first = exerciseData.last, let last = exerciseData.first {
+                    if let first = exerciseData.first, let last = exerciseData.last {
                         let diff = last.weight - first.weight
                         HStack {
                             Text("Изменение:")

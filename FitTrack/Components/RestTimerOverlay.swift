@@ -221,7 +221,9 @@ struct RestTimerOverlay: View {
         let content = UNMutableNotificationContent()
         content.title = "Отдых окончен!"
         content.body = "Время следующего подхода"
-        content.sound = .default
+        content.sound = UNNotificationSound.default
+        // Make it time-sensitive so it shows on lock screen and breaks through Focus
+        content.interruptionLevel = .timeSensitive
 
         let timeInterval = end.timeIntervalSince(Date())
         guard timeInterval > 0 else { return }

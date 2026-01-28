@@ -15,6 +15,7 @@ struct WorkoutView: View {
 
     @State private var completedSets: [String: Int] = [:]
     @State private var weights: [String: Double] = [:]
+    @State private var effortLevels: [String: EffortLevel] = [:]
     @State private var startTime: Date?
     @State private var isWorkoutStarted: Bool = false
     @State private var showRestTimer = false
@@ -26,6 +27,7 @@ struct WorkoutView: View {
     private var startTimeKey: String { "workout_start_time_\(workoutDay.rawValue)" }
     private var completedSetsKey: String { "workout_sets_\(workoutDay.rawValue)" }
     private var weightsKey: String { "workout_weights_\(workoutDay.rawValue)" }
+    private var effortLevelsKey: String { "workout_effort_\(workoutDay.rawValue)" }
     private var isStartedKey: String { "workout_started_\(workoutDay.rawValue)" }
 
     private var categories: [ExerciseCategory] {
@@ -64,7 +66,11 @@ struct WorkoutView: View {
                     // Finish button (only when workout started)
                     if isWorkoutStarted {
                         finishButton
-                            .padding(.bottom, 100)
+                            .padding(.bottom, 40)
+                    } else {
+                        // Space for start button overlay
+                        Spacer()
+                            .frame(height: 100)
                     }
                 }
                 .padding()
@@ -131,35 +137,43 @@ struct WorkoutView: View {
     // MARK: - Start Workout Overlay
     private var startWorkoutOverlay: some View {
         VStack {
-            Spacer()
+            // Transparent spacer that doesn't block touches
+            Color.clear
+                .contentShape(Rectangle())
+                .allowsHitTesting(false)
 
-            Button {
-                withAnimation(.spring(response: 0.3)) {
-                    startWorkout()
+            VStack(spacing: 0) {
+                // Gradient fade
+                LinearGradient(
+                    colors: [.clear, Color(.systemBackground).opacity(0.95), Color(.systemBackground)],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .frame(height: 60)
+                .allowsHitTesting(false)
+
+                // Button area
+                Button {
+                    withAnimation(.spring(response: 0.3)) {
+                        startWorkout()
+                    }
+                } label: {
+                    HStack {
+                        Image(systemName: "play.fill")
+                        Text("Начать тренировку")
+                    }
+                    .font(.headline)
+                    .foregroundStyle(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding()
+                    .background(accentColor)
+                    .clipShape(RoundedRectangle(cornerRadius: 16))
                 }
-            } label: {
-                HStack {
-                    Image(systemName: "play.fill")
-                    Text("Начать тренировку")
-                }
-                .font(.headline)
-                .foregroundStyle(.white)
-                .frame(maxWidth: .infinity)
-                .padding()
-                .background(accentColor)
-                .clipShape(RoundedRectangle(cornerRadius: 16))
+                .padding(.horizontal)
+                .padding(.bottom, 20)
+                .background(Color(.systemBackground))
             }
-            .padding()
-            .padding(.bottom, 20)
         }
-        .background(
-            LinearGradient(
-                colors: [.clear, Color(.systemBackground).opacity(0.9), Color(.systemBackground)],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-            .ignoresSafeArea()
-        )
     }
 
     // MARK: - Progress Section
@@ -220,6 +234,7 @@ struct WorkoutView: View {
                         exercise: exercise,
                         completedSets: completedSets[exercise.name] ?? 0,
                         weight: weights[exercise.name] ?? exercise.defaultWeight ?? 0,
+                        effortLevel: effortLevels[exercise.name],
                         accentColor: accentColor,
                         isEnabled: isWorkoutStarted,
                         onSetCompleted: {
@@ -246,6 +261,10 @@ struct WorkoutView: View {
                         },
                         onWeightChanged: { newWeight in
                             weights[exercise.name] = newWeight
+                            saveState()
+                        },
+                        onEffortChanged: { newEffort in
+                            effortLevels[exercise.name] = newEffort
                             saveState()
                         }
                     )
@@ -331,6 +350,12 @@ struct WorkoutView: View {
            let decoded = try? JSONDecoder().decode([String: Double].self, from: data) {
             weights = decoded
         }
+
+        // Load effort levels
+        if let data = UserDefaults.standard.data(forKey: effortLevelsKey),
+           let decoded = try? JSONDecoder().decode([String: Int].self, from: data) {
+            effortLevels = decoded.compactMapValues { EffortLevel(rawValue: $0) }
+        }
     }
 
     private func saveState() {
@@ -342,12 +367,18 @@ struct WorkoutView: View {
         if let encoded = try? JSONEncoder().encode(weights) {
             UserDefaults.standard.set(encoded, forKey: weightsKey)
         }
+        // Save effort levels
+        let effortRaw = effortLevels.mapValues { $0.rawValue }
+        if let encoded = try? JSONEncoder().encode(effortRaw) {
+            UserDefaults.standard.set(encoded, forKey: effortLevelsKey)
+        }
     }
 
     private func clearSavedState() {
         UserDefaults.standard.removeObject(forKey: startTimeKey)
         UserDefaults.standard.removeObject(forKey: completedSetsKey)
         UserDefaults.standard.removeObject(forKey: weightsKey)
+        UserDefaults.standard.removeObject(forKey: effortLevelsKey)
         UserDefaults.standard.removeObject(forKey: isStartedKey)
     }
 
@@ -362,7 +393,7 @@ struct WorkoutView: View {
         )
         modelContext.insert(session)
 
-        // Save exercise weights
+        // Save exercise weights and effort levels
         for category in categories {
             for exercise in category.exercises {
                 let completed = CompletedExercise(
@@ -372,7 +403,8 @@ struct WorkoutView: View {
                     weight: weights[exercise.name] ?? exercise.defaultWeight ?? 0,
                     completedSets: completedSets[exercise.name] ?? 0,
                     date: Date(),
-                    workoutDay: workoutDay.rawValue
+                    workoutDay: workoutDay.rawValue,
+                    effortLevel: effortLevels[exercise.name]
                 )
                 modelContext.insert(completed)
             }
@@ -385,16 +417,31 @@ struct ExerciseRow: View {
     let exercise: Exercise
     let completedSets: Int
     let weight: Double
+    let effortLevel: EffortLevel?
     let accentColor: Color
     var isEnabled: Bool = true
     let onSetCompleted: () -> Void
     let onSetDecremented: () -> Void
     let onWeightChanged: (Double) -> Void
+    let onEffortChanged: (EffortLevel) -> Void
 
     @State private var showWeightPicker = false
 
     private var isCompleted: Bool {
         completedSets >= exercise.sets
+    }
+
+    private var hasWeight: Bool {
+        weight > 0 || exercise.defaultWeight != nil
+    }
+
+    private func effortColor(_ level: EffortLevel) -> Color {
+        switch level.color {
+        case "green": return .green
+        case "orange": return .orange
+        case "red": return .red
+        default: return .orange
+        }
     }
 
     var body: some View {
@@ -413,7 +460,7 @@ struct ExerciseRow: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
 
-                        if weight > 0 {
+                        if hasWeight {
                             Button {
                                 showWeightPicker = true
                             } label: {
@@ -455,23 +502,68 @@ struct ExerciseRow: View {
                 }
             }
 
-            // Set indicators
+            // Set indicators and effort selector
             HStack(spacing: 6) {
                 ForEach(0..<exercise.sets, id: \.self) { index in
                     Circle()
                         .fill(index < completedSets ? accentColor : Color(.systemGray4))
                         .frame(width: 8, height: 8)
                 }
+
                 Spacer()
+
+                // Effort level selector (only for completed exercises with weight)
+                if isCompleted && hasWeight {
+                    EffortSelector(
+                        selectedLevel: effortLevel,
+                        onSelect: onEffortChanged
+                    )
+                }
             }
         }
         .padding()
         .background(Color(.secondarySystemBackground))
         .clipShape(RoundedRectangle(cornerRadius: 12))
-        .opacity(isEnabled ? 1 : 0.7)
         .sheet(isPresented: $showWeightPicker) {
             WeightPickerSheet(weight: weight, onSave: onWeightChanged)
                 .presentationDetents([.height(300)])
+        }
+    }
+}
+
+// MARK: - Effort Selector
+struct EffortSelector: View {
+    let selectedLevel: EffortLevel?
+    let onSelect: (EffortLevel) -> Void
+
+    private func color(for level: EffortLevel) -> Color {
+        switch level.color {
+        case "green": return .green
+        case "orange": return .orange
+        case "red": return .red
+        default: return .orange
+        }
+    }
+
+    var body: some View {
+        HStack(spacing: 4) {
+            ForEach(EffortLevel.allCases, id: \.self) { level in
+                Button {
+                    onSelect(level)
+                } label: {
+                    Image(systemName: level.icon)
+                        .font(.subheadline)
+                        .foregroundStyle(selectedLevel == level ? color(for: level) : .secondary.opacity(0.5))
+                        .padding(6)
+                        .background(
+                            selectedLevel == level
+                                ? color(for: level).opacity(0.15)
+                                : Color.clear
+                        )
+                        .clipShape(Circle())
+                }
+                .buttonStyle(.plain)
+            }
         }
     }
 }

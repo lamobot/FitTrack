@@ -81,6 +81,45 @@ struct Exercise: Identifiable, Hashable {
     }
 }
 
+// MARK: - Effort Level (RPE indicator)
+enum EffortLevel: Int, Codable, CaseIterable {
+    case easy = 1      // Can increase weight
+    case normal = 2    // Good working weight
+    case hard = 3      // At the limit
+
+    var title: String {
+        switch self {
+        case .easy: return "Легко"
+        case .normal: return "Нормально"
+        case .hard: return "Тяжело"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .easy: return "arrow.up.circle.fill"
+        case .normal: return "checkmark.circle.fill"
+        case .hard: return "flame.fill"
+        }
+    }
+
+    var color: String {
+        switch self {
+        case .easy: return "green"
+        case .normal: return "orange"
+        case .hard: return "red"
+        }
+    }
+
+    var hint: String {
+        switch self {
+        case .easy: return "Увеличь вес"
+        case .normal: return "Рабочий вес"
+        case .hard: return "На пределе"
+        }
+    }
+}
+
 // MARK: - Completed Exercise Record
 @Model
 class CompletedExercise {
@@ -91,8 +130,19 @@ class CompletedExercise {
     var completedSets: Int
     var date: Date
     var workoutDay: String
+    var effortLevelRaw: Int?
 
-    init(exerciseName: String, sets: Int, reps: Int, weight: Double = 0, completedSets: Int = 0, date: Date = .now, workoutDay: String) {
+    var effortLevel: EffortLevel? {
+        get {
+            guard let raw = effortLevelRaw else { return nil }
+            return EffortLevel(rawValue: raw)
+        }
+        set {
+            effortLevelRaw = newValue?.rawValue
+        }
+    }
+
+    init(exerciseName: String, sets: Int, reps: Int, weight: Double = 0, completedSets: Int = 0, date: Date = .now, workoutDay: String, effortLevel: EffortLevel? = nil) {
         self.exerciseName = exerciseName
         self.sets = sets
         self.reps = reps
@@ -100,6 +150,7 @@ class CompletedExercise {
         self.completedSets = completedSets
         self.date = date
         self.workoutDay = workoutDay
+        self.effortLevelRaw = effortLevel?.rawValue
     }
 
     var isCompleted: Bool {
