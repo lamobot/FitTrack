@@ -235,13 +235,32 @@ struct RestTimerOverlay: View {
     }
 
     private func timerFinished() {
-        // Vibration
-        AudioServicesPlaySystemSound(kSystemSoundID_Vibrate)
-        // Also play alert sound
+        timer?.invalidate()
+        timer = nil
+        isRunning = false
+        endTime = nil
+
+        // Strong haptic feedback (works reliably in foreground)
+        let generator = UINotificationFeedbackGenerator()
+        generator.prepare()
+        generator.notificationOccurred(.success)
+
+        // Play alert sound
         AudioServicesPlayAlertSound(SystemSoundID(1005))
 
-        stopTimer()
-        isShowing = false
+        // Repeat haptic after short delays to make it noticeable
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+            generator.notificationOccurred(.success)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+            generator.notificationOccurred(.success)
+        }
+
+        // Dismiss after vibrations complete
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+            timeRemaining = selectedDuration
+            isShowing = false
+        }
     }
 
     private func stopTimer() {

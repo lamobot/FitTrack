@@ -311,8 +311,11 @@ struct WorkoutView: View {
         isWorkoutStarted = true
         startTime = Date()
         elapsedTime = 0
+        completedSets = [:]
+        effortLevels = [:]
         UserDefaults.standard.set(startTime, forKey: startTimeKey)
         UserDefaults.standard.set(true, forKey: isStartedKey)
+        saveState()
 
         timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in
             if let start = startTime {
